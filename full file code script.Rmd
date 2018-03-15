@@ -1,0 +1,35 @@
+---
+title: "Full file code script"
+author: "Rosie Huggins"
+date: "March 14, 2018"
+output: html_document
+---
+```{r}
+#code used for the fullset of sample data (1222 files)
+library(readr)
+library(plyr)
+library(R.utils)
+library(base)
+library(dplyr)
+library(ggplot2)
+
+unzip_files(manifestname = "gdc_manifest_BRCA_htseq_counts.txt", directorylocation = "../Final Project/HTSeq GDC DATA/")
+first_file <- inspect_file("HTSeq GDC DATA/00a9fc98-9f19-4a73-ae62-048fd7923b66/e30e547e-eeff-4a1f-829b-b6ec9e79f02a.htseq.counts")
+patient_data <- create_main_data(manifestname = "gdc_manifest_BRCA_htseq_counts.txt", directorylocation = "../Final Project/HTSeq GDC DATA/", firstfile = first_file)
+clinical_data <- create_clinical_data(fileLocation = "../Final Project/gdc_download_20180223_145229.tar.gz", clinicalName = "735bc5ff-86d1-421a-8693-6e6f92055563/nationwidechildrens.org_clinical_patient_brca.txt")
+make_GDC_curl(manifestname = "gdc_manifest_BRCA_htseq_counts.txt")
+file_metadata <- subset_metadata("File_metadata.txt")
+merged_clinical_data <- merge_clinical_data(fileMetadata = file_metadata, clinicalData = clinical_data)
+ERpPRpHER2p_data <- subset_clinical_data(mergedData = merged_clinical_data, patientData = patient_data, ER = "Positive", PR = "Positive", HER2 = "Positive")
+ERpPRpHER2n_data <- subset_clinical_data(mergedData = merged_clinical_data, patientData = patient_data, ER = "Positive", PR = "Positive", HER2 = "Negative")
+ERpPRnHER2p_data <- subset_clinical_data(mergedData = merged_clinical_data, patientData = patient_data, ER = "Positive", PR = "Negative", HER2 = "Positive")
+ERpPRnHER2n_data <- subset_clinical_data(mergedData = merged_clinical_data, patientData = patient_data, ER = "Positive", PR = "Negative", HER2 = "Negative")
+ERnPRpHER2p_data <- subset_clinical_data(mergedData = merged_clinical_data, patientData = patient_data, ER = "Negative", PR = "Positive", HER2 = "Positive")
+ERnPRpHER2n_data <- subset_clinical_data(mergedData = merged_clinical_data, patientData = patient_data, ER = "Negative", PR = "Positive", HER2 = "Negative")
+ERnPRnHER2p_data <- subset_clinical_data(mergedData = merged_clinical_data, patientData = patient_data, ER = "Negative", PR = "Negative", HER2 = "Positive")
+ERnPRnHER2n_data <- subset_clinical_data(mergedData = merged_clinical_data, patientData = patient_data, ER = "Negative", PR = "Negative", HER2 = "Negative")
+normal_data <- subset_normal_data(mergedData = merged_clinical_data, patientData = patient_data)
+mean_data <- create_mean_data()
+get_gene_expression(GeneID = "ENSG00000000938")
+```
+
