@@ -1,0 +1,276 @@
+---
+title: "Full Final Project"
+author: "Rosie Huggins"
+date: "March 8, 2018"
+output: html_document
+---
+The goal for this project was to be able to download all available TCGA gene expression data (now managed by GDC) for breast cancer, sort this data based on hormone receptor status (ER, PR, and HER2 status) to define hormone-receptor-based subtypes, compute the mean and variation of expression for each gene, and then develop a function that would allow the user to enter an Ensembl gene ID and get a graph showing relative gene expression data for each breast cancer subtype. My research involves hormone receptors and gene expression changes in breast cancer, and this code would allow for simple preliminary searches for trying to determine the predicted expression profile for a given gene, and how we might expect it to be expressed in different primary tumors and cell lines.
+
+The first step is to download the GDC TCGA-BRCA data manifest file from the GDC website. Search terms included:
+  access = open
+  data category = transcriptome profiling
+                  RNA-seq
+                  HT-seq counts
+This resulted in a total of 1,222 files manifested, each of which has over 60,000 gene ID data points.
+I have included a manifest of only a subset of 27 of these files (3 from each subtype of hormone receptor status breast cancer and 3 from normal solid tissue data), so be aware that the graphs produced at the end will not be representeative of actual gene expression means for each subtype. The text file titled "sample_gdc_manifest_BRCA_htseq_counts.txt" should be used as the input for manifestname in unzip_files() as the beginning of running this code.
+
+Using the GDC Data Transfer Tool (available for download from the GDC website), I used the terminal to import the manifested files with the following line of code.
+
+  Gdc-client download -m /Users/Rosemary/Downloads/gdc_manifest_20180214_035329.txt
+  
+I then moved all the downloaded files to a folder within my working directory for this R project (../FinalProject/HTSeq GDC DATA/). For this sample, I suggest downloading the folder of data and saving it as "Sample HTSeq GDC Data" within your working directory.
+
+All these files are zipped, so they will need to be unzipped in R. Make sure the files and manifest file are stored in your working directory.
+
+    A summary of what is included in this Github repository, and how/when it should be used:
+    1. sample_gdc_manifest.txt - this file as generated as described above from the GDC website and downloaded. It was used as an input in the terminal for downloading zipped data files.
+    2. Sample HTSeq GDC Data folder (with 27 htseq.counts.gz files within individual folders within this larger folder). These were the files downloaded from the terminal command, which I have done so that this runs more smoothly.
+    Both sample_gdc_manifest.txt and the directory location of the Sample HTSeq Data folder are important inputs for running the first function: unzip_files.
+    3. gdc_download_20180223_145229.tar.gz - This file was generated from the GDC Legacy Archive with specifications that are clarified in the code below. I donwloaded a tar.gz zipped file containing a number of files including the one we are interested in - "nationwidechildrens.org_clinical_patient_brca.txt", which will provide clinical information about our gene expression data. This tar.gz file and its location will be input for the function create_clinical_data
+    4. sample_file_metadata.txt - this is another file that is downloaded using the command line of the terminal (the code to do so is included if you'd rather use that, but I've included the file as well). This will be used for the function subset_metadata
+
+```{r}
+library(readr)
+library(plyr)
+library(R.utils)
+library(base)
+library(dplyr)
+library(ggplot2)
+#a function for unzipping the files downloaded from your manifest file. The function requires the name of your manifest file as a character string and the location of the files to be unzipped. For example, my manifest file is "gdc_manifest_BRCA_htseq_counts.txt" and the location of the files is "../FinalProject/HTSeq GDC DATA/"
+#note - for large number of files (aka the fule data set, this can take up to 9 hours to finish)
+
+unzip_files <- function(manifestname, directorylocation){
+  #create a dataset of the manifested file names
+  BRCA_manifest <- read_delim(manifestname, 
+    "\t", escape_double = FALSE, trim_ws = TRUE)
+
+  #add a column of the full file name to feed into unzip
+  BRCA_manifest$fullfile <- paste(directorylocation, BRCA_manifest$id,"/", BRCA_manifest$filename, sep="")
+  
+  #unzip every file in BRCA_manifest$fullfile
+  for (r in BRCA_manifest$fullfile){
+    if (file.exists(r) == TRUE){
+        gunzip(filename = r, temporary = FALSE, skip = TRUE)
+    }
+  }
+}
+```
+
+Now that the files are unzipped, we want to create a dataframe with all this information. First, look at what a single file looks like.
+```{r}
+#this function take a file location as input and produces a dataframe to show an example of the format of the data files. saving this file will be useful for extracting gene IDs later on
+
+inspect_file <- function(fileLocation){
+  first_file <- read_delim(fileLocation, 
+    "\t", escape_double = FALSE, col_names = c("Gene ID","Count"), 
+    trim_ws = TRUE)
+  return(first_file)
+}
+```
+The data includes the Ensembl gene ID and HT Seq Count data of RNA-seq data. These counts indicate the number of RNA-based reads that align with a given gene, which can be used to approximate the expression of this gene. We want to create a table that includes the HTSeq data for each gene, for each sample(patient) available.
+```{r}
+#this function creates a data frame with columns as samples and rows as genes
+
+create_main_data <- function(manifestname, directorylocation, firstfile = first_file){
+  #create a dataset of the manifested file names
+  BRCA_manifest <- read_delim(manifestname, 
+    "\t", escape_double = FALSE, trim_ws = TRUE)
+
+  #add a column of the full file name
+  BRCA_manifest$fullfile <- paste(directorylocation, BRCA_manifest$id,"/", BRCA_manifest$filename, sep="")
+  
+  #remove the .gz from the file name
+  BRCA_manifest$newfullfile <- paste(substr(BRCA_manifest$fullfile, 1, nchar(BRCA_manifest$fullfile)-3), sep="")
+  
+  #get the gene IDs from firstfile, use these as rows in a new file
+  geneIDs <- firstfile$'Gene ID'
+  geneIDs <- gsub("\\..*", "", geneIDs)
+  patient_data <- data.frame(row.names = geneIDs)
+ 
+  #fill in the columns with patient RNA seq count data
+  i <- 1
+  for (a in BRCA_manifest$newfullfile){
+    patient_name <- as.character(i)
+    patient_name <- read_delim(a, "\t", escape_double = FALSE, col_names = c("Gene ID", "Count"), trim_ws = TRUE)
+    patient_data <- cbind(patient_data, patient_name$Count)
+    i <- i + 1
+  }
+  colnames(patient_data) <- c(BRCA_manifest$id)
+  return(patient_data)
+}
+```
+At this point, we have all the sample data for gene expression of 60,488 unique Ensembl IDs. However, we do not have clinical information on the patients from which these samples were isolated. To get this, we need to use the GDC Legacy Archive to download patient clinical data, which has IDs that can match up with our sample data. On the GDC Legacy Archive, we select data to download based on the following fields:
+  Cases:Primary Site: Breast
+  Cases:Project: TCGA-BRCA
+  Files:Data Category: Clinical
+  Files:Data Format: Biotab
+  and we download "nationwidechildrens.org_clinical_patient_brca.txt"
+This file is zipped, so we first need to unzip and import it.
+```{r}
+#a function that takes the location of a tar.gz file of GDC legacy data (fileLocation) and the file name for the desired clinical data (clinicalName) and produces a dataframe with clinical data relevant to the UUID (sample identifier) that we need as well as ER, PR, and HER2 hormone receptor status of the patient's tumor
+create_clinical_data <- function(fileLocation, clinicalName = "735bc5ff-86d1-421a-8693-6e6f92055563/nationwidechildrens.org_clinical_patient_brca.txt"){
+  untar(fileLocation, files = clinicalName)
+clinical_data <- read_delim(clinicalName, "\t", escape_double = FALSE, trim_ws = TRUE)
+
+#clean up the patient data. not all columns are relevant
+clinical_data <-subset(clinical_data, select = c("bcr_patient_uuid", "bcr_patient_barcode", "er_status_by_ihc", "pr_status_by_ihc", "her2_status_by_ihc"))
+#first two rows aren't data, delete them
+clinical_data <- tail(clinical_data, -2)
+return(clinical_data)
+}
+```
+The clinical data and patient (sample) data use different default identifiers for their data. However, both can be merged by locating their connecting ID information using another set of file metadata downloaded through the terminal from GDC. First, we need to generate a text file that can be used to query metadata from GDC.
+```{r}
+#This function takes the name of the manifest file we generated from GDC and produces a text file that can be used to retrieve metadata from the GDC at the terminal interface
+make_GDC_curl <- function(manifestname){
+  #create a dataset of the manifested file names
+  BRCA_manifest <- read_delim(manifestname, 
+    "\t", escape_double = FALSE, trim_ws = TRUE)
+  #extract file IDs from the manifest file
+  BRCA_manifest_length = nrow(BRCA_manifest)
+  fileUUID = toString(sprintf('"%s"', BRCA_manifest$id))
+  
+  Part1= '{"filters":{"op":"in","content":{"field":"files.file_id","value":[ '
+
+  Part2= '] }},"format":"TSV","fields":"file_id,file_name,cases.submitter_id,cases.case_id,data_category,data_type,cases.samples.tumor_descriptor,cases.samples.tissue_type,cases.samples.sample_type,cases.samples.submitter_id,cases.samples.sample_id,cases.samples.portions.analytes.aliquots.aliquot_id,cases.samples.portions.analytes.aliquots.submitter_id","size":'
+  
+  Part3= paste(shQuote(BRCA_manifest_length),"}",sep="")
+  
+  Sentence= paste(Part1,fileUUID,Part2,Part3, collapse=" ")
+  
+  #This will save a file called "BRCA_IDs.txt" to your directory
+  write.table(Sentence,"BRCA_IDs.txt",quote=F,col.names=F,row.names=F)
+  #The BRCA_IDs.txt file can be used to retrieve the file metadata from GDC. This needs to be done in the terminal. See code below.
+}
+```
+The following line needs to be entered into the terminal to retrieve file metadata from GDC.
+  curl --request POST --header "Content-Type: application/json" --data @BRCA_IDs.txt "https://gdc-api.nci.nih.gov/files" > File_metadata.txt
+This will save a new file called "File_metadata.txt" to your program directory.Now we can upload it here and pull the data relevant to connecting our patient (sample) data and clinical data.
+```{r}
+#This function takes the name of a file of metadata downloaded from the GDC API and returns a subset of the information provided by GDC, including only columns relevant to matching up data files
+subset_metadata <- function(metadataName){
+  file_metadata <- read_delim(metadataName, "\t", escape_double = FALSE, trim_ws = TRUE)
+  file_metadata <- file_metadata[-2, ]
+  #subset important file_metadata
+  sub_file_metadata <- data.frame(file_metadata$cases.0.submitter_id, file_metadata$file_id, file_metadata$cases.0.samples.0.sample_type)
+  return(sub_file_metadata)
+}
+```
+Now we can merge dataframes of clinical data with metadata based on matching IDs. This will allow us to generate subtypes of breast cancer based on hormone receptor status, where each file subset includes all the IDs of patient samples that match that subtype. These IDs will help us identify gene expression data corresponding to each breast cancer subtype.
+```{r}
+#This function takes two dataframes, one generated by subset_metadata() and one generated by create_clinical_data() in order to merge the two dataframes based on corresponding columns. This information can then be used to subset our clinical and gene expression data
+merge_clinical_data <- function(fileMetadata, clinicalData){
+  #merge dataframes to get a file with UUIDs and barcodes, and clinical info
+  merged_clinical_data <- merge(x = fileMetadata, y = clinicalData, by.x = "file_metadata.cases.0.submitter_id", by.y = "bcr_patient_barcode", all = TRUE)
+}
+```
+
+```{r}
+#This function takes our merged dataframe from Merge_clinical_data(), the patientData dataframe, as well as character strings for ER, PR, and HEr2 receptor status. It can accept "Positive" or "Negative" as inputs for these values. All three are required to generate the desired clinical subtypes
+subset_clinical_data <- function(mergedData, patientData, ER, PR, HER2){
+  #create subsets of clinical and gene expression data based on hormone receptor status
+  
+  temp <- filter(mergedData, er_status_by_ihc == ER,
+                        pr_status_by_ihc == PR,
+                        her2_status_by_ihc == HER2, file_metadata.cases.0.samples.0.sample_type == "Primary Tumor")
+  subtype_data <- data.frame(row.names = row.names(patientData))
+  subtype_data_colnames <- as.character()
+  for (c in colnames(patientData)){
+    if (c %in% temp$file_metadata.file_id){
+      subtype_data <- cbind(subtype_data, patientData[[c]])
+      subtype_data_colnames <- append(subtype_data_colnames, c)
+      colnames(subtype_data) = c(subtype_data_colnames)
+    }
+  }
+  return(subtype_data)
+}
+```
+
+```{r}
+#This function is similar to subset_clinical_data(), but it is used to generate a subset of data of normal tissue samples, derived from normal solid tissue from patients. This is useful later on for normalizing gene expression counts
+subset_normal_data <- function(mergedData, patientData){
+   
+  temp <- filter(mergedData, file_metadata.cases.0.samples.0.sample_type == "Solid Tissue Normal")
+  
+  normal_data <- data.frame(row.names = row.names(patientData))
+  normal_sample_colnames <- as.character()
+  for (c in colnames(patientData)){
+    if (c %in% temp$file_metadata.file_id){
+      normal_data <- cbind(normal_data, patientData[[c]])
+      normal_sample_colnames <- append(normal_sample_colnames, c)
+      colnames(normal_data) = c(normal_sample_colnames)
+    }
+  }
+  return(normal_data)
+}
+```
+For the final data manipulation, we need to create a dataframe of mean gene expressions for each subtyp. We will normalize these to our normal sample data in order to get a sense of up- or down-regulation of genes in each subtype of breast cancer.
+```{r}
+#This function takes each of the subtype and normal files generated by subset_normal_data() and subset_clinical_data(). The default file names that it takes are the ones produced in the code above, so the code can run without entering any additional values. The code will need 9 total files with equal dimensions. It returns a dataframe with the mean values across each subtype for each geneID, with the dataframe transposed so that each column represents a geneID and each row is a subtype. This is the format the ggplot2 will need to generate a graph.
+create_mean_data <- function(ERnPRnHER2nData = sample_ERnPRnHER2n_data, ERnPRnHER2pData = sample_ERnPRnHER2p_data, ERnPRpHER2nData = sample_ERnPRpHER2n_data, ERnPRpHER2pData = sample_ERnPRpHER2p_data, ERpPRnHER2nData = sample_ERpPRnHER2n_data, ERpPRnHER2pData = sample_ERpPRnHER2p_data, ERpPRpHER2nData = sample_ERpPRpHER2n_data, ERpPRpHER2pData = sample_ERpPRpHER2p_data, normalData = sample_normal_data){
+  mean_by_subtype <- data.frame(row.names = row.names(normalData))
+  mean_by_subtype$ERnPRnHER2n = (rowMeans(ERnPRnHER2nData, na.rm = TRUE) / rowMeans(normalData, na.rm = TRUE))
+  mean_by_subtype$ERnPRnHER2p = (rowMeans(ERnPRnHER2pData, na.rm = TRUE) / rowMeans(normalData, na.rm = TRUE))
+  mean_by_subtype$ERnPRpHER2n = (rowMeans(ERnPRpHER2nData, na.rm = TRUE) / rowMeans(normalData, na.rm = TRUE))
+  mean_by_subtype$ERnPRpHER2p = (rowMeans(ERnPRpHER2pData, na.rm = TRUE) / rowMeans(normalData, na.rm = TRUE))
+  mean_by_subtype$ERpPRnHER2n = (rowMeans(ERpPRnHER2nData, na.rm = TRUE) / rowMeans(normalData, na.rm = TRUE))
+  mean_by_subtype$ERpPRnHER2p = (rowMeans(ERpPRnHER2pData, na.rm = TRUE) / rowMeans(normalData, na.rm = TRUE))
+  mean_by_subtype$ERpPRpHER2n = (rowMeans(ERpPRpHER2nData, na.rm = TRUE) / rowMeans(normalData, na.rm = TRUE))
+  mean_by_subtype$ERpPRpHER2p = (rowMeans(ERpPRpHER2pData, na.rm = TRUE) / rowMeans(normalData, na.rm = TRUE))
+  colnames(mean_by_subtype) = c("ER- PR- HER2-", "ER- PR- HER2+", "ER- PR+ HER2-", "ER- PR+ HER2+", "ER+ PR- HER2-", "ER+ PR- HER2+", "ER+ PR+ HER2-", "ER+ PR+ HER2+")
+  #transpose mean-by suptype data table so it is usable in ggplot2
+  transposed_means <- data.frame(t(mean_by_subtype))
+  return(transposed_means)
+}
+```
+Now that we have mean data for each subtype of breast cancer, we want to be able to enter a Gene ID and produce a graph of mean expression of that gene for each subtype, which allows us to compare how gene expression varies across subtypes.
+```{r}
+get_gene_expression <- function(dfMean = mean_data, GeneID){
+  expressiondata <- data.frame(c(row.names(dfMean)), dfMean[[GeneID]])
+
+  colnames(expressiondata) <- c("Subtype", "Relative_Gene_Expression")
+  g <- ggplot(data = expressiondata) + 
+    aes(x = expressiondata$Subtype, 
+        y = expressiondata$Relative_Gene_Expression) +
+    geom_col()
+  
+  g + ggtitle(paste("Relative Expression of ",as.character(GeneID), " for Breast Cancer Subtypes")) + 
+    xlab("Subtype") + 
+    ylab("Relative Gene Expression Normalized to Normal Solid Tissue") +
+    theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
+    theme(axis.title.y = element_text(size = 9))
+}
+```
+
+```{r}
+#code used for sample subset of files
+library(readr)
+library(plyr)
+library(R.utils)
+library(base)
+library(dplyr)
+library(ggplot2)
+#for unzip_files: use the file name of the manifest you downloaded from GDC(this is provided on Github, so you just have to download it and save it to your working directory - be sure your working directory matches the value for directorylocation). If it is saved as is, this code should run.
+unzip_files(manifestname = "sample_gdc_manifest.txt", directorylocation = "../Final Project/Sample HTSeq GDC Data/")
+
+#enter the file location and file name into inspect_file to produce a preliminary file to understand what the data looks like. The file name may be different than what is provided, so if it doesn't run when you try it, you can just navigate in your directory to the first unzipped "htseq.counts" file and use this file name.
+sample_first_file <- inspect_file("Sample HTSeq GDC Data/0a2fdcec-904b-4015-91bb-71e689af12a1/b033c85a-2395-4ced-a84d-ac1fbce674bf.htseq.counts")
+sample_patient_data <- create_main_data(manifestname = "sample_gdc_manifest.txt", directorylocation = "../Final Project/Sample HTSeq GDC Data/", firstfile = sample_first_file)
+sample_clinical_data <- create_clinical_data(fileLocation = "../Final Project/gdc_download_20180223_145229.tar.gz")
+make_GDC_curl(manifestname = "sample_gdc_manifest.txt")
+sample_file_metadata <- subset_metadata("sample_file_metadata.txt")
+sample_merged_clinical_data <- merge_clinical_data(fileMetadata = sample_file_metadata, clinicalData = sample_clinical_data)
+sample_ERpPRpHER2p_data <- subset_clinical_data(mergedData = sample_merged_clinical_data, patientData = sample_patient_data, ER = "Positive", PR = "Positive", HER2 = "Positive")
+sample_ERpPRpHER2n_data <- subset_clinical_data(mergedData = sample_merged_clinical_data, patientData = sample_patient_data, ER = "Positive", PR = "Positive", HER2 = "Negative")
+sample_ERpPRnHER2p_data <- subset_clinical_data(mergedData = sample_merged_clinical_data, patientData = sample_patient_data, ER = "Positive", PR = "Negative", HER2 = "Positive")
+sample_ERpPRnHER2n_data <- subset_clinical_data(mergedData = sample_merged_clinical_data, patientData = sample_patient_data, ER = "Positive", PR = "Negative", HER2 = "Negative")
+sample_ERnPRpHER2p_data <- subset_clinical_data(mergedData = sample_merged_clinical_data, patientData = sample_patient_data, ER = "Negative", PR = "Positive", HER2 = "Positive")
+sample_ERnPRpHER2n_data <- subset_clinical_data(mergedData = sample_merged_clinical_data, patientData = sample_patient_data, ER = "Negative", PR = "Positive", HER2 = "Negative")
+sample_ERnPRnHER2p_data <- subset_clinical_data(mergedData = sample_merged_clinical_data, patientData = sample_patient_data, ER = "Negative", PR = "Negative", HER2 = "Positive")
+sample_ERnPRnHER2n_data <- subset_clinical_data(mergedData = sample_merged_clinical_data, patientData = sample_patient_data, ER = "Negative", PR = "Negative", HER2 = "Negative")
+sample_normal_data <- subset_normal_data(mergedData = sample_merged_clinical_data, patientData = sample_patient_data)
+mean_data <- create_mean_data()
+#you can enter any Gene ID that is represented in the data and see what the graph looks like. Once again, these aren't actually representative of subtype expression because it is only based on three files for each subtype.
+get_gene_expression(GeneID = "ENSG00000000938")
+```
+
